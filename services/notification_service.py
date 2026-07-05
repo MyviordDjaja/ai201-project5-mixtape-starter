@@ -41,7 +41,7 @@ def add_to_playlist(playlist_id: str, song_id: str, added_by_user_id: str) -> No
         song_id: The ID of the song being added.
         added_by_user_id: The ID of the user who added the song.
     """
-    from models import Playlist
+    from models import Playlist, playlist_entries
     from services.playlist_service import get_playlist_songs
 
     song = db.session.get(Song, song_id)
@@ -56,9 +56,22 @@ def add_to_playlist(playlist_id: str, song_id: str, added_by_user_id: str) -> No
     if not playlist:
         raise ValueError(f"Playlist {playlist_id} not found")
 
-    # Add the song to the playlist
+    # Add the song to the playlist at the next position. A plain
+    # playlist.songs.append() can't populate the NOT NULL position/added_by
+    # columns on playlist_entries, so insert into the association table directly.
     if song not in playlist.songs:
-        playlist.songs.append(song)
+        next_position = db.session.execute(
+            db.select(db.func.coalesce(db.func.max(playlist_entries.c.position), 0))
+            .where(playlist_entries.c.playlist_id == playlist_id)
+        ).scalar() + 1
+        db.session.execute(
+            playlist_entries.insert().values(
+                playlist_id=playlist_id,
+                song_id=song_id,
+                position=next_position,
+                added_by=added_by_user_id,
+            )
+        )
         db.session.commit()
 
     # Notify the person who originally shared the song (if it wasn't them who added it)
